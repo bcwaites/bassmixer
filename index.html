@@ -1,0 +1,71 @@
+// bass-shortener — Cloudflare Worker for Bass Mixer's "Share Settings" button.
+// Same contract as tenor-shortener: POST { url } -> { short }.
+// The Bitly token is stored as an encrypted Worker secret named BITLY_TOKEN
+// (never in this file, never sent to the browser).
+
+// ── EDIT THIS ──────────────────────────────────────────────────────────
+// The web addresses allowed to use this shortener. Put your GitHub Pages
+// address here (no trailing slash), e.g. "https://bcwaites.github.io".
+// Add your own domain too if you later embed the app on marimbawarehouse.com.
+const ALLOWED_ORIGINS = [
+  "https://YOUR-GITHUB-USERNAME.github.io",
+];
+// ───────────────────────────────────────────────────────────────────────
+
+function corsHeaders(origin) {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+}
+
+function json(body, status, origin) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+  });
+}
+
+export default {
+  async fetch(request, env) {
+    const origin = request.headers.get("Origin") || "";
+    const allowed = ALLOWED_ORIGINS.includes(origin);
+
+    // Browser pre-flight check
+    if (request.method === "OPTIONS") {
+      return allowed ? new Response(null, { status: 204, headers: corsHeaders(origin) }) : new Response(null, { status: 403 });
+    }
+    if (!allowed) return new Response("Forbidden", { status: 403 });
+    if (request.method !== "POST") return json({ error: "POST only" }, 405, origin);
+
+    let longUrl;
+    try {
+      ({ url: longUrl } = await request.json());
+    } catch (e) {
+      return json({ error: "Bad JSON" }, 400, origin);
+    }
+    // Only shorten links that point back at the app itself, so nobody can
+    // use your Bitly account to shorten arbitrary links.
+    if (typeof longUrl !== "string" || !ALLOWED_ORIGINS.some((o) => longUrl.startsWith(o + "/"))) {
+      return json({ error: "URL not allowed" }, 400, origin);
+    }
+
+    const res = await fetch("https://api-ssl.bitly.com/v4/shorten", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + env.BITLY_TOKEN,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ long_url: longUrl }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      return json({ error: "Bitly error", status: res.status, detail }, 502, origin);
+    }
+    const data = await res.json();
+    return json({ short: data.link }, 200, origin);
+  },
+};
