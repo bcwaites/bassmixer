@@ -431,7 +431,6 @@ input[type="range"].fader {
         <svg class="acc-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="acc-body" id="acc-rhythm">
-        <div class="field-hint">Same note and rest values as Melody Mixer. The generator builds the composite rhythm from these and voices it across the line. "4 sixteenths" also unlocks the 16th-note splits; "16th-note triplets" unlocks the triplet versions.</div>
         <div class="field-label">Note values</div>
         <div id="rhythmNoteGroups"></div>
         <div class="field-label">Rest values</div>
@@ -645,9 +644,9 @@ input[type="range"].fader {
 
 // MusicXML <divisions> = ticks per quarter. 120 = LCM(2,3,4,5,8) so 8ths,
 // 16ths, 32nds, 16th-note triplets (20) and quintuplets (24) all divide.
-const DIV = 120;
+const DIV = 360; // ticks per quarter: divisible by 2,3,4,5,8 and 9 (9-lets = 9 per 2 beats)
 let MEASURE_TICKS = DIV * 4; // updated by setTimeSignature()
-const TYPE_TICKS = { whole: 480, half: 240, quarter: 120, eighth: 60, "16th": 30, "32nd": 15 };
+const TYPE_TICKS = { whole: DIV * 4, half: DIV * 2, quarter: DIV, eighth: DIV / 2, "16th": DIV / 4, "32nd": DIV / 8 };
 const TYPE_LEVELS = { whole: 0, half: 0, quarter: 0, eighth: 1, "16th": 2, "32nd": 3 };
 const MAX_RUN = 4;
 
@@ -685,6 +684,7 @@ const RHYTHM_GROUPS = [
   { id: "triplet-8th", label: "Eighth note triplet", beats: 1, cat: "beamed-simple", triplet: true, slots: [["eighth", 0, false, true], ["eighth", 0, false, true], ["eighth", 0, false, true]] },
   { id: "triplet-qtr", label: "Quarter note triplet", beats: 2, cat: "beamed-simple", triplet: true, slots: [["quarter", 0, false, false], ["quarter", 0, false, false], ["quarter", 0, false, false]] },
   { id: "6x16trip", label: "16th-note triplets (6 per beat)", beats: 1, cat: "beamed-simple", sextuplet: true, slots: [["16th", 0, false, true], ["16th", 0, false, true], ["16th", 0, false, true], ["16th", 0, false, true], ["16th", 0, false, true], ["16th", 0, false, true]] },
+  { id: "9let", label: "9-let (9 sixteenths over 2 beats)", beats: 2, cat: "beamed-simple", nonet: true, slots: Array.from({ length: 9 }, () => ["16th", 0, false, true]) },
 
   { id: "eRest-8th", label: "8th rest + 8th note", beats: 1, cat: "beamed-mixed", slots: [["eighth", 0, true, false], ["eighth", 0, false, false]] },
   { id: "8th-eRest", label: "8th note + 8th rest", beats: 1, cat: "beamed-mixed", slots: [["eighth", 0, false, false], ["eighth", 0, true, false]] },
@@ -716,7 +716,7 @@ const RHYTHM_CATS = [
 // Placement rules carried over from Melody Mixer's generator: these only
 // start on a beat. Longer values are further restricted to sensible spots.
 const DOWNBEAT_ONLY = new Set(["qRest", "dot8-16", "4x16th", "4x8th", "triplet-8th", "triplet-qtr", "6x16trip"]);
-const ALLOWED_STARTS = { whole: [0], wRest: [0], half: [0, 240], hRest: [0, 240], dottedHalf: [0, 120], "triplet-qtr": [0, 240] };
+const ALLOWED_STARTS = { whole: [0], wRest: [0], half: [0, 2 * DIV], hRest: [0, 2 * DIV], dottedHalf: [0, DIV], "triplet-qtr": [0, 2 * DIV], "9let": [0, DIV, 2 * DIV, 3 * DIV] };
 
 // ══════════════════════════════════════════════════════════════════════
 // SPLIT CELL LIBRARY
@@ -727,21 +727,33 @@ const ALLOWED_STARTS = { whole: [0], wRest: [0], half: [0, 240], hRest: [0, 240]
 // ══════════════════════════════════════════════════════════════════════
 const CELL_LIBRARY = [
   // ── Down / Up patterns: 1's-4's (subdivision fixed by grouping, per Bryan's sheet)
-  { id: "n1", cat: "downup", name: "1's", aka: "1 note per drum · 8ths", dirs: true, minDrums: 3, subs: [2],
-    gen: (c) => { const k = ri(Math.min(3, c.N), c.N); const d = c.dir(); return { notes: runOf(runStart(c.N, k, d), k, d).map((x) => ({ d: x })) }; } },
+  // 1's (Bryan): one note per drum only in quarters, eighths or eighth-note
+  // triplets - never 16ths (single-16th splits belong to the specialty splits).
+  { id: "n1", cat: "downup", name: "1's", aka: "1 note per drum \u00b7 quarters, 8ths, 8th triplets", dirs: true, minDrums: 3, subs: [1, 2, 3],
+    gen: (c) => {
+      if (c.sub === 3) { // eighth-note triplets: whole beats of 3 drums in a row
+        const beats = Math.random() < 0.5 ? 2 : 1; const n = [];
+        for (let b = 0; b < beats; b++) { const d = c.dir(); runOf(runStart(c.N, 3, d), 3, d).forEach((x) => n.push({ d: x })); }
+        return { notes: n };
+      }
+      const k = ri(Math.min(3, c.N), c.N); const d = c.dir();
+      return { notes: runOf(runStart(c.N, k, d), k, d).map((x) => ({ d: x })) };
+    } },
   { id: "n2", cat: "downup", name: "2's", aka: "2 notes per drum · 16ths", dirs: true, minDrums: 3, subs: [4],
     gen: (c) => { const k = ri(2, c.N); const d = c.dir(); const n = []; runOf(runStart(c.N, k, d), k, d).forEach((x) => n.push({ d: x }, { d: x })); return { notes: n }; } },
-  { id: "n3", cat: "downup", name: "3's", aka: "3 notes per drum · 16th triplets", dirs: true, minDrums: 3, subs: [6],
-    gen: (c) => { const k = ri(2, c.N); const d = c.dir(); const n = []; runOf(runStart(c.N, k, d), k, d).forEach((x) => n.push({ d: x }, { d: x }, { d: x })); return { notes: n }; } },
+  { id: "n3", cat: "downup", name: "3's", aka: "3 notes per drum \u00b7 16th triplets / 9-lets", dirs: true, minDrums: 3, subs: [6, 9],
+    gen: (c) => { if (c.sub === 9) { const d = c.dir(); const n = []; runOf(runStart(c.N, 3, d), 3, d).forEach((x) => n.push({ d: x }, { d: x }, { d: x })); return { notes: n }; }
+      const k = pick(c.N >= 4 ? [2, 2, 4] : [2]); const d = c.dir(); const n = []; runOf(runStart(c.N, k, d), k, d).forEach((x) => n.push({ d: x }, { d: x }, { d: x })); return { notes: n }; } },
   { id: "n4", cat: "downup", name: "4's", aka: "4 notes per drum · 32nds", dirs: true, minDrums: 3, subs: [8],
-    gen: (c) => { const k = ri(2, c.N); const d = c.dir(); const n = []; runOf(runStart(c.N, k, d), k, d).forEach((x) => { for (let i = 0; i < 4; i++) n.push({ d: x }); }); return { notes: n }; } },
+    gen: (c) => { const k = pick(c.N >= 4 ? [2, 2, 4] : [2]); const d = c.dir(); const n = []; runOf(runStart(c.N, k, d), k, d).forEach((x) => { for (let i = 0; i < 4; i++) n.push({ d: x }); }); return { notes: n }; } },
 
   // ── Splits (names/definitions from Bryan's Bass Rudiments sheet)
-  { id: "split1", cat: "split", name: "Split Singles", aka: "Squigs · Hand-to-Hand", dirs: false, minDrums: 3, subs: [4],
-    gen: (c) => { const [a, b] = adjPair(c.N); const len = pick([4, 8]); return { notes: runOf(0, len, 1).map((i) => ({ d: i % 2 ? b : a })) }; } },
-  { id: "bug", cat: "split", name: "Bug-a-duhs", aka: "Buhguhdah · 3 drums in a row", dirs: true, minDrums: 3, subs: [4, 6],
+  { id: "split1", cat: "split", name: "Split Singles", aka: "Squigs \u00b7 Hand-to-Hand", dirs: false, minDrums: 3, subs: [4, 8],
+    rates: [[4, "16th"], [8, "32nd"]], // per-pattern note-value toggles (like Dn/Up)
+    gen: (c) => { const [a, b] = adjPair(c.N); const len = (c.sub === 8 ? pick([8, 16]) : pick([4, 8])); return { notes: runOf(0, len, 1).map((i) => ({ d: i % 2 ? b : a })) }; } },
+  { id: "bug", cat: "split", name: "Bug-a-duhs", aka: "Buhguhdah \u00b7 3 drums in a row", dirs: true, minDrums: 3, subs: [4, 6, 9],
     gen: (c) => {
-      const groups = c.sub === 4 ? pick([4, 4, 2]) : pick([2, 2, 4]);
+      const groups = c.sub === 9 ? 3 : c.sub === 4 ? pick([4, 4, 2]) : pick([2, 2, 4]);
       const notes = []; let prev = null;
       for (let g = 0; g < groups; g++) {
         if (!prev || Math.random() < 0.45) { const d = c.dir(); prev = runOf(runStart(c.N, 3, d), 3, d); }
@@ -755,14 +767,6 @@ const CELL_LIBRARY = [
       const count = pick([1, 2, 2, 3, 4]); const notes = [];
       for (let i = 0; i < count; i++) { const d = c.dir(); runOf(runStart(c.N, L, d), L, d).forEach((x) => notes.push({ d: x })); }
       return { notes };
-    } },
-  { id: "split2", cat: "split", name: "Split 2s", aka: "Wee-Woos", dirs: false, minDrums: 3, subs: [4],
-    gen: (c) => { const [a, b] = adjPair(c.N); const reps = pick([1, 2]); const n = []; for (let r = 0; r < reps; r++) n.push({ d: a }, { d: a }, { d: b }, { d: b }); return { notes: n }; } },
-  { id: "pushy", cat: "split", name: "Pushy 2s", aka: "Split Diddles · diddled 8ths", dirs: true, minDrums: 3, subs: [2],
-    gen: (c) => {
-      if (Math.random() < 0.35) { const [a, b] = adjPair(c.N); return { notes: [a, b, a, b].map((x) => ({ d: x, diddle: true })) }; }
-      const k = ri(2, c.N); const d = c.dir();
-      return { notes: runOf(runStart(c.N, k, d), k, d).map((x) => ({ d: x, diddle: true })) };
     } },
   { id: "gc", cat: "split", name: "Gamecubes", aka: "Carr Bombs · downbeats split 3+", dirs: true, minDrums: 4, subs: [4],
     gen: (c) => {
@@ -792,9 +796,9 @@ const CELL_LIBRARY = [
       for (let r = 0; r < reps; r++) n.push({ d: mid }, { d: a }, { d: mid }, { d: b });
       return { notes: n };
     } },
-  { id: "puh", cat: "split", name: "Puh-Duh-Duhs", aka: "Goblins \u00b7 1 + 2, any voice, down or up", dirs: true, minDrums: 3, subs: [4, 6],
+  { id: "puh", cat: "split", name: "Puh-Duh-Duhs", aka: "Goblins \u00b7 1 + 2, any voice, down or up", dirs: true, minDrums: 3, subs: [4, 6, 9],
     gen: (c) => {
-      const target = c.sub === 4 ? pick([4, 4, 2, 5]) : pick([2, 4]); const notes = [];
+      const target = c.sub === 9 ? 3 : c.sub === 4 ? pick([4, 4, 2, 5]) : pick([2, 4]); const notes = [];
       const mode = pick(["cascade", "repeat", "mixed", "mixed"]);
       let d = c.dir(); let s = runStart(c.N, 2, d);
       for (let g = 0; g < target; g++) {
@@ -843,7 +847,8 @@ const CELL_CATS = [
   { cat: "downup", label: "Down / Up patterns" },
   { cat: "split", label: "Splits" },
 ];
-const SUB_SLOT_TICKS = { 2: 60, 4: 30, 5: 24, 6: 20, 8: 15 };
+// slots per beat -> ticks per slot. 9 = 9-let: nine 16ths across TWO beats (9:8).
+const SUB_SLOT_TICKS = { 1: DIV, 2: DIV / 2, 3: DIV / 3, 4: DIV / 4, 5: DIV / 5, 6: DIV / 6, 8: DIV / 8, 9: (2 * DIV) / 9 };
 
 // ══════════════════════════════════════════════════════════════════════
 // STATE
@@ -876,6 +881,7 @@ const state = {
   isPlaying: false,
 };
 CELL_LIBRARY.forEach((c) => { state.cellDirs[c.id] = { down: true, up: true }; });
+state.cellRates = { split1: { 4: true, 8: false } }; // Split Singles: 16ths on, 32nds off
 state.cellDirs.n3 = { down: false, up: true };
 state.cellDirs.n4 = { down: false, up: true };
 
@@ -886,18 +892,31 @@ let currentXml = "";
 // ══════════════════════════════════════════════════════════════════════
 // AVAILABILITY
 // ══════════════════════════════════════════════════════════════════════
-function subAllowed(sub) {
+function subAllowed(sub, cell) {
+  if (sub === 9) return state.rhythm.has("9let"); // 9-lets appear only when the 9-let option is on
+  if (cell && cell.rates) {
+    const r = state.cellRates[cell.id] || {};
+    if (!r[sub]) return false;                       // note value switched off for this pattern
+    return sub === 4 ? state.rhythm.has("4x16th") : true; // 32nd split singles don't need a Rhythm setting
+  }
+  if (cell && cell.id === "n3") return true; // 3's are always available (turning them on also turns on 16th-note triplets)
+  if (sub === 1) return state.rhythm.has("quarter");
+  if (sub === 2 && cell && cell.id === "n1") return state.rhythm.has("2x8th") || state.rhythm.has("4x8th");
+  if (sub === 3) return state.rhythm.has("triplet-8th");
   if (sub === 4) return state.rhythm.has("4x16th");
   if (sub === 6) return state.rhythm.has("6x16trip");
-  return true; // 8ths (1's, Pushy 2s), 32nds (4's) and quintuplets (Eggos) are intrinsic to those cells
+  return true; // Pushy 2s (diddled 8ths), 32nds (4's) and quintuplets (Eggos) are intrinsic to those cells
 }
 function cellUsableSubs(cell) {
   if (state.drumCount < cell.minDrums) return [];
-  return cell.subs.filter(subAllowed);
+  return cell.subs.filter((sub) => subAllowed(sub, cell));
 }
 function cellUnavailableReason(cell) {
   if (state.drumCount < cell.minDrums) return "Needs " + cell.minDrums + "+ drums";
-  if (!cell.subs.some(subAllowed)) return cell.subs.includes(6) && !cell.subs.includes(4) ? "Turn on 16th-note triplets in Rhythm" : "Turn on 4 sixteenths in Rhythm";
+  if (!cell.subs.some((sub) => subAllowed(sub, cell))) {
+    if (cell.id === "n1") return "Turn on quarter notes, eighths or 8th triplets in Rhythm";
+    return cell.subs.includes(6) && !cell.subs.includes(4) ? "Turn on 16th-note triplets in Rhythm" : "Turn on 4 sixteenths in Rhythm";
+  }
   return "";
 }
 function has16thContext() {
@@ -944,7 +963,7 @@ function makeRest(m, start, ticks, xmlType, dots, extra) {
 // grid: half rests only on beats 1/3, quarters on beats, etc.).
 function alignedRests(m, t0, t1) {
   const out = []; let t = t0;
-  const SIZES = [[480, "whole"], [240, "half"], [120, "quarter"], [60, "eighth"], [30, "16th"], [15, "32nd"]];
+  const SIZES = [[DIV * 4, "whole"], [DIV * 2, "half"], [DIV, "quarter"], [DIV / 2, "eighth"], [DIV / 4, "16th"], [DIV / 8, "32nd"]];
   while (t < t1) {
     const s = SIZES.find(([sz]) => t % sz === 0 && t + sz <= t1) || [t1 - t, "32nd"];
     out.push(makeRest(m, t, s[0], s[1], 0));
@@ -957,11 +976,12 @@ function beatOf(t) { return Math.floor(t / DIV); }
 
 // Turn a cell's note list into notated items starting at `pos`.
 function cellItems(cell, sub, gen, m, pos) {
+  if (sub === 9 && gen.notes.length !== 9) return null; // a 9-let is exactly nine notes
   const uid = ++unitCounter;
   const slot = SUB_SLOT_TICKS[sub];
   const notes = gen.notes;
   const items = [];
-  const typeFor = { 2: "eighth", 4: "16th", 5: "16th", 6: "16th", 8: "32nd" }[sub];
+  const typeFor = { 1: "quarter", 2: "eighth", 3: "eighth", 4: "16th", 5: "16th", 6: "16th", 8: "32nd", 9: "16th" }[sub];
   notes.forEach((n, i) => {
     const start = pos + i * slot;
     const drums = [n.d];
@@ -971,8 +991,14 @@ function cellItems(cell, sub, gen, m, pos) {
     const it = makeNote(m, start, slot, typeFor, 0, drums, { diddle: !!n.diddle, fromCell: cell.id, accentEligible });
     const beat = m * state.beats + beatOf(start);
     if (gen.beam === "three") { it.beamKey = "c" + uid + "-" + Math.floor(i / 3); it.subKey = it.beamKey; }
-    else { it.beamKey = "b" + beat; it.subKey = (sub === 6 || sub === 8) ? "b" + beat + "h" + Math.floor((start % DIV) / 60) : it.beamKey; }
-    if (sub === 6) {
+    else { it.beamKey = "b" + beat; it.subKey = (sub === 6 || sub === 8) ? "b" + beat + "h" + Math.floor((start % DIV) / (DIV / 2)) : it.beamKey; }
+    if (sub === 9) {
+      it.beamKey = "n" + uid; it.subKey = "n" + uid + "-" + Math.floor(i / 3); // one beam over all nine, 2nd beam per 3
+      it.tuplet = { actual: 9, normal: 8, normalType: "16th", start: i === 0, stop: i === 8, bracket: false, show: true };
+    } else if (sub === 3) {
+      const k = i % 3;
+      it.tuplet = { actual: 3, normal: 2, normalType: "eighth", start: k === 0, stop: k === 2, bracket: false, show: true };
+    } else if (sub === 6) {
       const k = i % 3;
       it.tuplet = { actual: 3, normal: 2, normalType: "16th", start: k === 0, stop: k === 2, bracket: false, show: true };
     } else if (sub === 5) {
@@ -992,17 +1018,33 @@ function cellItems(cell, sub, gen, m, pos) {
   return { items, end };
 }
 
-function voiceGroup(nNotes, N, mode) {
+// Voices a rhythm group across the line. Bryan's rule: outside the
+// specialty splits, a 16th (or faster) note never sits alone on a drum -
+// the drum keeps it for at least 2 notes in a row (like 2's). Quarters,
+// eighths and eighth-note triplets may change drums every note (like 1's).
+// `shorts[i]` is true for notes faster than an eighth.
+function voiceGroup(shorts, N, mode) {
+  const nNotes = shorts.length;
   if (mode === "unison") return runOf(0, nNotes, 1).map(() => allDrums(N));
-  const how = pick(["run", "run", "pair", "single"]);
-  if (how === "single") { const d = ri(1, N); return runOf(0, nNotes, 1).map(() => [d]); }
-  if (how === "pair") { const [a, b] = adjPair(N); return runOf(0, nNotes, 1).map((i) => [i % 2 ? b : a]); }
-  let d = pick([1, -1]); let cur = ri(1, N); const out = [];
-  for (let i = 0; i < nNotes; i++) {
-    out.push([cur]);
-    if (cur + d < 1 || cur + d > N) d = -d;
-    cur += d;
+  const segs = [];
+  let i = 0;
+  while (i < nNotes) {
+    let len = 1;
+    if (shorts[i] || (i + 1 < nNotes && shorts[i + 1])) len = Math.min(nNotes - i, pick([2, 2, 2, 3, 4]));
+    segs.push(len); i += len;
   }
+  // A short note left alone at the end joins the previous drum.
+  if (segs.length > 1 && segs[segs.length - 1] === 1 && shorts[nNotes - 1]) { segs.pop(); segs[segs.length - 1]++; }
+  const how = pick(["run", "run", "pair", "single"]);
+  let drums;
+  if (how === "single" && nNotes <= 4) { const d = ri(1, N); drums = segs.map(() => d); }
+  else if (how === "pair") { const [a, b] = adjPair(N); drums = segs.map((_, k) => (k % 2 ? b : a)); }
+  else {
+    let d = pick([1, -1]); let cur = ri(1, N); drums = [];
+    segs.forEach(() => { drums.push(cur); if (cur + d < 1 || cur + d > N) d = -d; cur += d; });
+  }
+  const out = [];
+  segs.forEach((len, k) => { for (let j = 0; j < len; j++) out.push([drums[k]]); });
   return out;
 }
 
@@ -1020,8 +1062,11 @@ function groupItems(group, m, pos, voicing) {
     if (group.triplet) {
       ticks = ticks * 2 / 3;
       tuplet = { actual: 3, normal: 2, normalType: xmlType, start: i === 0, stop: i === group.slots.length - 1, bracket: group.id === "triplet-qtr", show: true };
+    } else if (group.nonet) {
+      ticks = (2 * DIV) / 9;
+      tuplet = { actual: 9, normal: 8, normalType: "16th", start: i === 0, stop: i === 8, bracket: false, show: true };
     } else if (group.sextuplet) {
-      ticks = 20;
+      ticks = DIV / 6;
       tuplet = { actual: 3, normal: 2, normalType: "16th", start: i % 3 === 0, stop: i % 3 === 2, bracket: false, show: true };
     }
     let it;
@@ -1032,7 +1077,7 @@ function groupItems(group, m, pos, voicing) {
       // Melody Mixer rule: eighth-note groups starting off the beat are flagged, not beamed.
       if (beamed && !(offBeat && allEighths)) {
         it.beamKey = group.beats > 1 ? "g" + uid : "b" + beat;
-        it.subKey = group.sextuplet ? "b" + beat + "h" + Math.floor(i / 3) : it.beamKey;
+        it.subKey = group.sextuplet ? "b" + beat + "h" + Math.floor(i / 3) : group.nonet ? it.beamKey + "-" + Math.floor(i / 3) : it.beamKey;
       }
     }
     items.push(it);
@@ -1049,7 +1094,7 @@ function rhythmGroupsAvailable(pos) {
     if (pos % DIV !== 0 && DOWNBEAT_ONLY.has(g.id)) return false;
     if (ALLOWED_STARTS[g.id] && !ALLOWED_STARTS[g.id].includes(pos)) return false;
     if (g.id === "sRest" && !has16thContext()) return false;
-    if (pos % 30 !== 0 && g.cat !== "rest") return false;
+    if (pos % (DIV / 4) !== 0 && g.cat !== "rest") return false;
     // Off the beat, a value must finish inside its own beat - no quarter
     // notes starting on the "a" and hanging across the next beat line.
     if (pos % DIV !== 0 && (pos % DIV) + g.beats * DIV > DIV) return false;
@@ -1063,7 +1108,7 @@ function cellsAvailable(pos) {
   CELL_LIBRARY.forEach((cell) => {
     if (!state.cells.has(cell.id)) return;
     cellUsableSubs(cell).forEach((sub) => {
-      if (sub === 4 ? pos % 30 === 0 : pos % DIV === 0) out.push({ cell, sub });
+      if (sub === 4 ? pos % (DIV / 4) === 0 : pos % DIV === 0) out.push({ cell, sub });
     });
   });
   return out;
@@ -1080,19 +1125,54 @@ function dirPicker(cellId) {
 
 const CELL_WEIGHT = 0.6;
 
+// A "release" after 3's/4's: one quarter or eighth note (a unison, or a
+// drum that's free to play) that lands the run, then rests to the beat.
+function releaseCandidate(m, pos, N, timeline) {
+  const toBeat = (Math.floor(pos / DIV) + 1) * DIV - pos;
+  const opts = [];
+  if (toBeat >= DIV && state.rhythm.has("quarter")) opts.push(["quarter", DIV]);
+  if (toBeat >= DIV / 2 && pos % (DIV / 2) === 0) opts.push(["eighth", DIV / 2]);
+  if (!opts.length) return null;
+  const choices = [];
+  if (state.unisonMode !== "splits") choices.push(allDrums(N));
+  if (state.unisonMode !== "only") for (let d = 1; d <= N; d++) choices.push([d]);
+  for (let t = 0; t < 12; t++) {
+    const [type, ticks] = pick(opts);
+    const items = [makeNote(m, pos, ticks, type, 0, pick(choices), { fromGroup: "release", accentEligible: true })];
+    let end = pos + ticks;
+    if (end % DIV !== 0) { const be = (Math.floor(end / DIV) + 1) * DIV; alignedRests(m, end, be).forEach((r) => items.push(r)); end = be; }
+    if (end > MEASURE_TICKS) continue;
+    if (rulesOk(timeline.slice(-40).concat(items), N)) return { items, end };
+  }
+  return null;
+}
+
+let lastRunCell = false;
 function generatePattern() {
   const N = state.drumCount;
   unitCounter = 0;
+  lastRunCell = false;
   const measures = [];
   const timeline = []; // committed items (for rule checks)
   for (let m = 0; m < state.measures; m++) {
     const items = [];
     let pos = 0, guard = 0;
     while (pos < MEASURE_TICKS && guard++ < 300) {
-      const cells = cellsAvailable(pos);
-      const groups = rhythmGroupsAvailable(pos);
+      const afterRun = lastRunCell; // the previous unit was 3's or 4's
+      let cells = cellsAvailable(pos);
+      let groups = rhythmGroupsAvailable(pos);
+      if (afterRun) {
+        // Follow 3's/4's with a release note or a new rhythm - never a rest
+        // value, and never another 3's/4's straight away.
+        groups = groups.filter((g) => g.cat !== "rest" && !g.slots.every((x) => x[2]) && !g.slots[0][2]);
+        cells = cells.filter(({ cell }) => cell.id !== "n3" && cell.id !== "n4");
+      }
       let placed = null;
-      for (let attempt = 0; attempt < 40 && !placed; attempt++) {
+      for (let attempt = 0; attempt < 60 && !placed; attempt++) {
+        if (afterRun && attempt < 30 && Math.random() < 0.5) {
+          const rel = releaseCandidate(m, pos, N, timeline);
+          if (rel) { placed = rel; break; }
+        }
         const useCell = cells.length && (!groups.length || Math.random() < CELL_WEIGHT);
         let cand = null;
         if (useCell) {
@@ -1102,23 +1182,25 @@ function generatePattern() {
           cand = cellItems(cell, sub, gen, m, pos);
         } else if (groups.length) {
           const g = pick(groups);
-          const nNotes = g.slots.filter((s) => !s[2]).length;
+          const shorts = g.slots.filter((s) => !s[2]).map((s) => s[0] === "16th" || s[0] === "32nd");
           let mode = "split";
           if (state.unisonMode === "only") mode = "unison";
           else if (state.unisonMode === "included" && Math.random() * 100 < state.unisonFreq) mode = "unison";
-          cand = groupItems(g, m, pos, voiceGroup(nNotes, N, mode));
+          cand = groupItems(g, m, pos, voiceGroup(shorts, N, mode));
         }
         if (!cand || cand.end > MEASURE_TICKS) continue;
         const recent = timeline.slice(-40).concat(cand.items);
         if (!rulesOk(recent, N)) continue;
         placed = cand;
       }
+      if (!placed) placed = releaseCandidate(m, pos, N, timeline);
       if (!placed) {
         // Nothing legal fits here: rest to the next beat.
         const next = Math.min(MEASURE_TICKS, (Math.floor(pos / DIV) + 1) * DIV);
         placed = { items: alignedRests(m, pos, next), end: next };
       }
       placed.items.forEach((it) => { items.push(it); timeline.push(it); });
+      lastRunCell = placed.items.some((it) => it.fromCell === "n3" || it.fromCell === "n4");
       pos = placed.end;
     }
     measures.push(items);
@@ -1152,8 +1234,8 @@ function makeUnisonAccentChecker() {
   if (mode === "off") return () => false;
   if (mode === "mixed") return () => Math.random() * 100 < state.uAccentDensity;
   return (it) => {
-    if (it.start % 30 !== 0) return false;
-    const local = it.start / 30;
+    if (it.start % (DIV / 4) !== 0) return false;
+    const local = it.start / (DIV / 4);
     if (mode === "static") return state.uAccentStatic.has(local);
     const global = it.m * spm + local;
     const windowSize = (state.uRotateEvery === 0 ? state.beats : state.uRotateEvery) * 4;
@@ -1300,7 +1382,7 @@ function measureXml(items, number) {
 
 function releaseMeasureItems(m) {
   const N = state.drumCount;
-  return [makeNote(m, 0, 120, "quarter", 0, allDrums(N)), ...alignedRests(m, 120, MEASURE_TICKS)];
+  return [makeNote(m, 0, DIV, "quarter", 0, allDrums(N)), ...alignedRests(m, DIV, MEASURE_TICKS)];
 }
 
 function buildScoreXml(measures) {
@@ -1554,7 +1636,10 @@ function renderCellChecklist() {
       if (reason) row.title = reason;
       const lab = document.createElement("label"); lab.className = "switch";
       const inp = document.createElement("input"); inp.type = "checkbox"; inp.checked = state.cells.has(cell.id);
-      inp.addEventListener("change", () => { if (inp.checked) state.cells.add(cell.id); else state.cells.delete(cell.id); });
+      inp.addEventListener("change", () => {
+        if (inp.checked) state.cells.add(cell.id); else state.cells.delete(cell.id);
+        if (cell.id === "n3" && inp.checked && !state.rhythm.has("6x16trip")) { state.rhythm.add("6x16trip"); renderRhythmChecklist(); renderCellChecklist(); }
+      });
       const tr = document.createElement("span"); tr.className = "switch-track";
       lab.appendChild(inp); lab.appendChild(tr);
       const nm = document.createElement("div"); nm.className = "cell-name";
@@ -1562,6 +1647,23 @@ function renderCellChecklist() {
       nm.querySelector(".cn").textContent = cell.name;
       nm.querySelector(".ca").textContent = reason ? reason : cell.aka;
       row.appendChild(lab); row.appendChild(nm);
+      if (cell.rates) {
+        const rates = document.createElement("div"); rates.className = "cell-dirs";
+        cell.rates.forEach(([sub, txt]) => {
+          const cr = state.cellRates[cell.id] || (state.cellRates[cell.id] = {});
+          const t = document.createElement("span");
+          t.className = "dir-tog" + (cr[sub] ? " on" : "");
+          t.style.pointerEvents = "auto"; // stays clickable even when the row is grayed out
+          t.textContent = txt;
+          t.addEventListener("click", () => {
+            if (cr[sub] && !cell.rates.some(([o]) => o !== sub && cr[o])) return; // keep at least one value on
+            cr[sub] = !cr[sub];
+            renderCellChecklist();
+          });
+          rates.appendChild(t);
+        });
+        row.appendChild(rates);
+      }
       if (cell.dirs) {
         const dirs = document.createElement("div"); dirs.className = "cell-dirs";
         [["down", "Dn"], ["up", "Up"]].forEach(([k, txt]) => {
@@ -1855,7 +1957,7 @@ function triggerMetronomeClick(time, isDownbeat) {
 // subdivisions (quintuplets, 16th triplets, 32nds) land exactly and tempo
 // changes mid-playback stay in sync. Transport PPQ = 480 = 4 x DIV.
 // ══════════════════════════════════════════════════════════════════════
-const PPQ = 480;
+const PPQ = DIV; // Transport ticks = MusicXML ticks
 const TK = PPQ / DIV;
 let scheduledIds = [];
 
@@ -1863,7 +1965,6 @@ function stopPlayback() {
   scheduledIds.forEach((id) => Tone.Transport.clear(id));
   scheduledIds = [];
   Tone.Transport.stop();
-  Tone.Transport.loop = false;
   Tone.Transport.position = 0;
   state.isPlaying = false;
   document.getElementById("status").textContent = "Stopped.";
@@ -1890,36 +1991,39 @@ async function startPlayback() {
   Tone.Transport.PPQ = PPQ;
   Tone.Transport.bpm.value = state.tempo;
 
-  const offset = state.countIn ? 2 * MEASURE_TICKS : 0;
+  // One callback per beat, counted by the app itself (like Tenor Mixer's
+  // per-step scheduler). Tone's built-in Transport loop can skip events that
+  // sit exactly on the loop point, which dropped the beat-1 click on every
+  // pass after the first - counting beats ourselves avoids that entirely.
   const allMeasures = currentMeasures.slice();
   if (state.releaseMeasureEnabled) allMeasures.push(releaseMeasureItems(currentMeasures.length));
-  const totalTicks = allMeasures.length * MEASURE_TICKS;
-
-  const at = (t) => Math.round(t * TK) + "i";
-  if (state.countIn) {
-    for (let b = 0; b < 2 * state.beats; b++) {
-      scheduledIds.push(Tone.Transport.schedule((time) => triggerMetronomeClick(time, b % state.beats === 0), at(b * DIV)));
+  const beatsTotal = allMeasures.length * state.beats;
+  const byBeat = Array.from({ length: beatsTotal }, () => []);
+  allMeasures.forEach((items, m) => items.forEach((it) => {
+    if (it.rest) return;
+    const abs = m * MEASURE_TICKS + it.start;
+    const b = Math.floor(abs / DIV);
+    byBeat[b].push({ it, off: abs - b * DIV });
+  }));
+  const countInBeats = state.countIn ? 2 * state.beats : 0;
+  let countInLeft = countInBeats;
+  let beat = 0;
+  scheduledIds.push(Tone.Transport.scheduleRepeat((time) => {
+    if (countInLeft > 0) {
+      const n = countInBeats - countInLeft;
+      triggerMetronomeClick(time, n % state.beats === 0);
+      countInLeft--;
+      if (countInLeft === 0) Tone.Draw.schedule(() => { document.getElementById("status").textContent = "Playing \u00b7 " + state.tempo + " BPM"; }, time);
+      return;
     }
-    scheduledIds.push(Tone.Transport.schedule((time) => {
-      Tone.Draw.schedule(() => { document.getElementById("status").textContent = "Playing · " + state.tempo + " BPM"; }, time);
-    }, at(offset)));
-  }
-  for (let b = 0; b < totalTicks / DIV; b++) {
-    scheduledIds.push(Tone.Transport.schedule((time) => { if (state.metronome) triggerMetronomeClick(time, b % state.beats === 0); }, at(offset + b * DIV)));
-  }
-  allMeasures.forEach((items, m) => {
-    items.forEach((it) => {
-      if (it.rest) return;
-      scheduledIds.push(Tone.Transport.schedule((time) => playItem(it, time), at(offset + m * MEASURE_TICKS + it.start)));
-    });
-  });
-  if (state.loop) {
-    Tone.Transport.loop = true;
-    Tone.Transport.loopStart = at(offset);
-    Tone.Transport.loopEnd = at(offset + totalTicks);
-  } else {
-    scheduledIds.push(Tone.Transport.schedule((time) => { Tone.Draw.schedule(() => stopPlayback(), time); }, at(offset + totalTicks)));
-  }
+    if (beat >= beatsTotal) {
+      if (!state.loop) { Tone.Draw.schedule(() => stopPlayback(), time); return; }
+      beat = 0;
+    }
+    if (state.metronome) triggerMetronomeClick(time, beat % state.beats === 0);
+    byBeat[beat].forEach(({ it, off }) => playItem(it, off ? time + Tone.Ticks(off).toSeconds() : time));
+    beat++;
+  }, DIV + "i", 0));
   Tone.Transport.start("+0.05");
   state.isPlaying = true;
   document.getElementById("status").textContent = state.countIn ? "Counting in…" : "Playing · " + state.tempo + " BPM";
@@ -1983,6 +2087,7 @@ function serializeSettings() {
     drumCount: state.drumCount,
     cells: Array.from(state.cells),
     cellDirs: state.cellDirs,
+    cellRates: state.cellRates,
     rhythm: Array.from(state.rhythm),
     unisonMode: state.unisonMode,
     unisonFreq: state.unisonFreq,
@@ -2009,12 +2114,13 @@ function restoreSettingsFromUrl() {
   try {
     const s = JSON.parse(decodeURIComponent(raw));
     Object.assign(state, s);
-    state.cells = new Set(s.cells || CELL_LIBRARY.map((c) => c.id));
+    state.cells = new Set((s.cells || CELL_LIBRARY.map((c) => c.id)).filter((id) => CELL_LIBRARY.some((c) => c.id === id)));
     state.rhythm = new Set(s.rhythm || ["quarter", "4x16th"]);
     state.uAccentStatic = new Set(s.uAccentStatic || [0]);
     if (![3, 4, 5].includes(state.beats)) state.beats = 4;
     MEASURE_TICKS = state.beats * DIV;
     CELL_LIBRARY.forEach((c) => { if (!state.cellDirs[c.id]) state.cellDirs[c.id] = { down: true, up: true }; });
+    if (!state.cellRates || !state.cellRates.split1) state.cellRates = { split1: { 4: true, 8: false } };
     if (![3, 4, 5].includes(state.drumCount)) state.drumCount = 5;
     return true;
   } catch (err) {
