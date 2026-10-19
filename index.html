@@ -2320,7 +2320,7 @@ function syncUIFromState() {
 // One Worker + KV storage shared by every mixer (no Bitly, no monthly cap).
 // Same contract as before: POST {url} -> {short}, 8s timeout, falls back to
 // the full link with a status message.
-const SHORTENER_URL = "https://mw-links.bcwaites.workers.dev/";
+const SHORTENER_URL = "https://mw-links.drumsunlimited.workers.dev/";
 
 async function shortenViaCloudflare(longUrl, inp, btn, sts) {
   try {
