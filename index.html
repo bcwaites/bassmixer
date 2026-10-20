@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -383,17 +384,18 @@ html.mw-compact #mwMoreBtn { display: inline-flex; align-items: center; gap: 6px
 html.mw-compact .mixer { display: none; }                  /* faders live in the More sheet */
 html.mw-compact #mwSheet .mixer { display: flex; }
 html.mw-compact .brand-footer { display: none; }
-html.mw-compact .content-scroll { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+html.mw-compact .content-scroll { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
 html.mw-compact .staff-card { padding: 10px; }
 html.mw-compact .share-bar { margin: 8px 10px; }
 
-/* Bottom play bar */
+/* Play bar: second row at the top, right under Settings / More */
 html.mw-compact #mwPlaybar {
-  display: flex; align-items: center; gap: 8px;
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
-  padding: 10px max(12px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-  background: #FFFFFF; border-top: 1px solid #E0E0E0; box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  position: relative; z-index: 5;
+  padding: 8px max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
+  background: #FFFFFF; border-bottom: 1px solid #E0E0E0;
 }
+html.mw-compact .top-bar { border-bottom: none; padding-bottom: 4px; }
 #mwPlaybar button { touch-action: manipulation; font-family: inherit; }
 #mwPlaybar .mw-pb-gen { flex: 1.2; min-height: 48px; border-radius: 6px; border: 1px solid #1A1A1A; background: #1A1A1A; color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .04em; }
 #mwPlaybar .mw-pb-play { flex: 1; min-height: 48px; border-radius: 6px; border: 1px solid #1A1A1A; background: #fff; color: #1A1A1A; font-size: 14px; font-weight: 700; }
@@ -431,9 +433,9 @@ html.mw-compact #mwSheet.open { transform: translateY(0); }
 @media (max-height: 500px) {
   html.mw-compact .top-bar { padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 4px; }
   html.mw-compact .top-bar .btn-settings, html.mw-compact #mwMoreBtn { min-height: 36px; padding-top: 4px; padding-bottom: 4px; }
-  html.mw-compact #mwPlaybar { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  html.mw-compact #mwPlaybar { padding-top: 4px; padding-bottom: 6px; }
   html.mw-compact #mwPlaybar .mw-pb-gen, html.mw-compact #mwPlaybar .mw-pb-play, html.mw-compact #mwPlaybar .mw-pb-tempo button { min-height: 40px; }
-  html.mw-compact .content-scroll { padding-top: 8px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+  html.mw-compact .content-scroll { padding-top: 8px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
 }
 
 /* Rotate hint (phones in portrait) */
@@ -2483,7 +2485,9 @@ window.addEventListener("load", () => {
       '<div class="mw-pb-tempo"><button type="button" class="mw-pb-down" aria-label="Slower">&minus;</button>' +
       '<div class="mw-pb-bpm"><span class="mw-pb-val">--</span><small>BPM</small></div>' +
       '<button type="button" class="mw-pb-up" aria-label="Faster">+</button></div>');
-    document.body.appendChild(playbar);
+    // Second row of the top bar (right under Settings / More), so it stays
+    // visible while the music scrolls underneath.
+    topBar.parentNode.insertBefore(playbar, topBar.nextSibling);
     playbar.querySelector(".mw-pb-gen").addEventListener("click", () => click("#btnGen"));
     playbar.querySelector(".mw-pb-play").addEventListener("click", () => (isPlaying() ? click("#btnStop") : click("#btnPlay")));
     const nudge = (d) => {
@@ -2618,11 +2622,49 @@ window.addEventListener("load", () => {
 
   // ── iPhone silent switch: ask for "playback" audio so the ringer
   // switch doesn't mute the app (iOS 16.4+; ignored elsewhere) ─────────
+  // Two layers, so it works on every iOS version:
+  //  1. iOS 16.4+/17+: ask for the "playback" audio session directly.
+  //  2. Older iOS: a silent, looping HTML <audio> element started from a tap
+  //     switches the page into the media-playback audio category, which the
+  //     ringer switch doesn't mute - Web Audio (the mixer's sound) then plays
+  //     even with the phone on silent.
   function playbackAudio() {
     try { if (navigator.audioSession && navigator.audioSession.type !== "playback") navigator.audioSession.type = "playback"; } catch (e) {}
   }
   playbackAudio();
-  window.addEventListener("pointerdown", playbackAudio, { capture: true, passive: true });
+
+  let silentEl = null;
+  function silentWavUrl() {
+    // 0.5 s of 8 kHz, 8-bit mono silence, built in memory (no file needed)
+    const n = 4000, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, 36 + n, true); str(8, "WAVE"); str(12, "fmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    str(36, "data"); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  }
+  function unlockSilentSwitch() {
+    playbackAudio();
+    try {
+      if (!silentEl) {
+        silentEl = document.createElement("audio");
+        silentEl.src = silentWavUrl();
+        silentEl.loop = true;
+        silentEl.preload = "auto";
+        silentEl.setAttribute("playsinline", "");
+        silentEl.setAttribute("x-webkit-airplay", "deny");
+      }
+      if (silentEl.paused) { const p = silentEl.play(); if (p && p.catch) p.catch(() => {}); }
+    } catch (e) {}
+    try { if (window.Tone && Tone.context && Tone.context.state !== "running") Tone.context.resume(); } catch (e) {}
+  }
+  // Must run inside a real tap (iOS only grants audio from touchend/click)
+  ["touchend", "click"].forEach((ev) => window.addEventListener(ev, unlockSilentSwitch, { capture: true, passive: true }));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && silentEl) { try { silentEl.pause(); } catch (e) {} } // don't hold audio while in the background
+  });
 
   // ── Print at desktop layout (2 measures per line) ──────────────────
   // render: a function that re-renders the score and returns a promise.
