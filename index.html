@@ -1218,6 +1218,8 @@ function groupItems(group, m, pos, voicing) {
       if (beamed && !(offBeat && allEighths)) {
         it.beamKey = group.beats > 1 ? "g" + uid : "b" + beat;
         it.subKey = group.sextuplet ? "b" + beat + "h" + Math.floor(i / 3) : group.nonet ? it.beamKey + "-" + Math.floor(i / 3) : it.beamKey;
+      } else {
+        it.noBeam = true; // Melody Mixer values written with flags on purpose (e.g. 8th rest + 8th, dotted quarter + 8th)
       }
     }
     items.push(it);
@@ -1419,6 +1421,13 @@ function computeBeams(items, measureNumber) {
   const groups = [];
   let cur = null;
   items.forEach((it) => {
+    // Any 8th/16th/32nd without its own beam group (release notes, notes that
+    // meet from two different patterns) joins the beat it sits in, so a
+    // "1 e &" beams together on one drum, split across drums, or in unison.
+    if (!it.rest && !it.beamKey && !it.noBeam && !it.tuplet && TYPE_LEVELS[it.xmlType] >= 1) {
+      it.beamKey = "b" + (it.m * state.beats + beatOf(it.start));
+      it.subKey = it.beamKey;
+    }
     const beamable = !it.rest && it.beamKey && TYPE_LEVELS[it.xmlType] >= 1;
     if (beamable && cur && cur.key === it.beamKey) { cur.notes.push(it); return; }
     if (cur && cur.notes.length >= 2) groups.push(cur);
