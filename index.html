@@ -320,7 +320,7 @@ input[type="range"].fader {
 </style>
 <style>
 /* ══════════════════════════════════════════════════════════════════════
-   Marimba Warehouse — shared mobile layer  (mw-mobile.css, v1)
+   Marimba Warehouse — shared mobile layer  (mw-mobile.css, v1.1)
    Used by every mixer. EVERY rule here is scoped to a class that
    mw-mobile.js puts on <html> only for touch devices, so a computer with
    a mouse never sees any of it:
@@ -428,6 +428,11 @@ html.mw-compact #mwSheet.open { transform: translateY(0); }
 #mwSheet .fader-channel { justify-content: space-between; }
 #mwSheet .fader-channel-master { padding-left: 0; border-left: none; }
 #mwSheet input[type="range"].fader { flex: 1; width: auto; height: 36px; }
+/* Vertical channel strips (Groove Mixer) lie flat in the sheet */
+#mwSheet .fader-channel { flex-direction: row; align-items: center; gap: 10px; }
+#mwSheet .fader-label { min-width: 56px; }
+#mwSheet .fader-track { flex: 1; height: auto; display: flex; }
+#mwSheet .fader-track input[type="range"].fader { -webkit-appearance: auto; appearance: auto; writing-mode: horizontal-tb; direction: ltr; width: 100%; }
 
 /* Short screens (phones in landscape): slimmer bars so the music gets the room */
 @media (max-height: 500px) {
@@ -2469,7 +2474,7 @@ window.addEventListener("load", () => {
 
 <script>
 /* ══════════════════════════════════════════════════════════════════════
-   Marimba Warehouse — shared mobile layer  (mw-mobile.js, v1)
+   Marimba Warehouse — shared mobile layer  (mw-mobile.js, v1.1)
    Drop this in after an app's own script. It works with the shared mixer
    layout (top bar, .mixer, sidebar accordions, share bar) and only acts on
    touch devices — on a computer with a mouse it adds the classes below to
@@ -2479,6 +2484,10 @@ window.addEventListener("load", () => {
      mw-touch    any touch device (phones + tablets)
      mw-compact  touch device ≤ 1366px wide (phones and tablets, any orientation)
      mw-phone    touch device < 600px wide (phones in portrait)
+
+   It looks for: .top-bar (with #btnSettings #btnGen #btnPlay #btnStop and
+   #tempoInput or #tempo), .mixer, .staff-card, .sidebar-header, #shareCopy.
+   Playing state comes from state.isPlaying or a top-level isPlaying flag.
 
    App hooks (optional - an app works without them, just less tuned):
      MW.measuresPerLine()    -> 1 on phones in portrait, else 2 (2 while printing)
@@ -2534,7 +2543,7 @@ window.addEventListener("load", () => {
     if (!topBar) return;
 
     // App name in the compact top bar
-    const name = (document.title || "").trim();
+    const name = (document.title || "").split(" \u2014 ")[0].trim(); // "Melody Mixer — Marimba Warehouse" -> "Melody Mixer"
     const title = el("div", { class: "mw-title" }, name);
     const settings = $("#btnSettings");
     if (settings && settings.nextSibling) topBar.insertBefore(title, settings.nextSibling); else topBar.appendChild(title);
@@ -2567,7 +2576,7 @@ window.addEventListener("load", () => {
     // visible while the music scrolls underneath.
     topBar.parentNode.insertBefore(playbar, topBar.nextSibling);
     playbar.querySelector(".mw-pb-gen").addEventListener("click", () => click("#btnGen"));
-    playbar.querySelector(".mw-pb-play").addEventListener("click", () => (isPlaying() ? click("#btnStop") : click("#btnPlay")));
+    playbar.querySelector(".mw-pb-play").addEventListener("click", () => (playingNow() ? click("#btnStop") : click("#btnPlay")));
     const nudge = (d) => {
       const slider = $("#tempo");
       if (!slider) return;
@@ -2580,16 +2589,12 @@ window.addEventListener("load", () => {
     holdRepeat(playbar.querySelector(".mw-pb-up"), () => nudge(1));
     setInterval(syncPlaybar, 250);
 
-    // Drawer close (X)
+    // Drawer close (X) - only when the app doesn't already have its own
     const head = $(".sidebar-header");
-    if (head) {
+    if (head && !head.querySelector("button")) {
       const x = el("button", { type: "button", class: "mw-close-x", "aria-label": "Close settings" }, "&#10005;");
       head.appendChild(x);
-      x.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (typeof window.setSidebarCollapsed === "function") window.setSidebarCollapsed(true);
-        else { const sb = $("#sidebar"); if (sb) sb.classList.add("collapsed"); }
-      });
+      x.addEventListener("click", (e) => { e.stopPropagation(); closeDrawer(); });
     }
 
     // One accordion section open at a time on touch devices
@@ -2605,11 +2610,11 @@ window.addEventListener("load", () => {
       });
     });
 
-    // Rotate hint (phones in portrait)
-    const card = $(".content-scroll");
+    // Rotate hint (phones in portrait), just above the music
+    const card = $(".staff-card");
     if (card) {
       const hint = el("div", { id: "mwRotateHint" }, "<span>&#8635; Turn your phone sideways for a wider view of the music.</span><button type=\"button\" aria-label=\"Dismiss\">&#10005;</button>");
-      card.insertBefore(hint, card.firstChild);
+      card.parentNode.insertBefore(hint, card);
       hint.querySelector("button").addEventListener("click", () => {
         hint.classList.remove("show");
         try { sessionStorage.setItem("mwRotateHintDismissed", "1"); } catch (e) {}
@@ -2637,13 +2642,21 @@ window.addEventListener("load", () => {
     ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => btn.addEventListener(ev, stop));
   }
 
-  function isPlaying() {
+  function closeDrawer() {
+    if (typeof window.setSidebarCollapsed === "function") return window.setSidebarCollapsed(true);
+    if (typeof window.setSidebarOpen === "function") return window.setSidebarOpen(false);
+    if (typeof window.closeSidebar === "function") return window.closeSidebar();
+    const sb = $("#sidebar"); if (sb) sb.classList.add("collapsed");
+  }
+
+  function playingNow() {
     try { if (typeof state !== "undefined" && state && "isPlaying" in state) return !!state.isPlaying; } catch (e) {}
+    try { if (typeof isPlaying === "boolean") return isPlaying; } catch (e) {} // apps with a top-level flag
     return false;
   }
   function syncPlaybar() {
     if (!playbar) return;
-    const playing = isPlaying();
+    const playing = playingNow();
     const p = playbar.querySelector(".mw-pb-play");
     p.classList.toggle("playing", playing);
     p.innerHTML = playing ? "&#9632; Stop" : "&#9654; Play";
@@ -2661,12 +2674,21 @@ window.addEventListener("load", () => {
       const topBar = $(".top-bar");
       const playback = el("div", { class: "mw-sheet-group" });
       const tools = el("div", { class: "mw-sheet-group" });
+      const park = (node, dest) => {
+        const ph = document.createComment("mw-placeholder");
+        node.parentNode.insertBefore(ph, node);
+        moved.push({ node, ph });
+        dest.appendChild(node);
+      };
+      // Share / Save / Download / Reset buttons go under "Share & Save";
+      // other controls (zoom, loop, metronome, toggles) under "Playback".
+      const TOOL = ".btn-share, .btn-pdf, .btn-reset";
       Array.from(topBar.children).forEach((child) => {
         if (isPrimary(child)) return;
-        const ph = document.createComment("mw-placeholder");
-        child.parentNode.insertBefore(ph, child);
-        moved.push({ node: child, ph });
-        (child.matches("button, .btn-share") ? tools : playback).appendChild(child);
+        if (child.matches(TOOL)) return park(child, tools);
+        const inner = child.matches("button") ? [] : child.querySelectorAll(TOOL);
+        if (inner.length) return inner.forEach((b) => park(b, tools)); // a group of share buttons
+        park(child, playback);
       });
       sheetBody.appendChild(el("div", { class: "mw-sheet-label" }, "Playback"));
       sheetBody.appendChild(playback);
