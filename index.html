@@ -607,16 +607,16 @@ html.mw-touch #mwNativeShare.available { display: inline-flex; align-items: cent
       <div class="acc-body" id="acc-accents">
         <div class="sub-label">Unison accents (accent grid)</div>
         <div class="radio-group" id="uAccentModeGroup">
-          <div class="tog" data-umode="off">Off</div>
+          <div class="tog on" data-umode="off">Off</div>
           <div class="tog" data-umode="static">Static</div>
           <div class="tog" data-umode="rotating">Rotating</div>
-          <div class="tog on" data-umode="mixed">Mixed</div>
+          <div class="tog" data-umode="mixed">Mixed</div>
         </div>
         <div id="uAccentStaticWrapper" style="display:none;">
           <div class="field-label">Accent positions</div>
           <div class="pos-grid" id="uAccentStaticGrid"></div>
         </div>
-        <div id="uAccentMixedWrapper">
+        <div id="uAccentMixedWrapper" style="display:none;">
           <div class="field-hint" style="margin-top:8px;">Accents land anywhere in unison passages, rolled fresh every measure.</div>
           <div class="field-label" style="display:flex; justify-content:space-between;">
             <span>Accent density</span>
@@ -644,9 +644,9 @@ html.mw-touch #mwNativeShare.available { display: inline-flex; align-items: cent
         <div class="sub-label" style="margin-top:16px;">Split accents (random)</div>
         <div class="voice-toggle-row">
           <span class="v-label">Random split accents</span>
-          <label class="switch"><input type="checkbox" id="accentToggle" checked><span class="switch-track"></span></label>
+          <label class="switch"><input type="checkbox" id="accentToggle"><span class="switch-track"></span></label>
         </div>
-        <div id="accentDetail">
+        <div id="accentDetail" class="controls-disabled">
           <div class="field-label" style="display:flex; justify-content:space-between;">
             <span>Accent density</span>
             <span id="accentDensityVal" style="color:#1A1A1A; font-weight:700;">20%</span>
@@ -709,15 +709,15 @@ html.mw-touch #mwNativeShare.available { display: inline-flex; align-items: cent
         Loop
       </label>
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#6B6B6B;margin-left:8px;" title="Adds a unison quarter-note release + 3 beats of rest after the pattern. With Loop on, that bar of rest doubles as a recount.">
-        <span class="switch"><input type="checkbox" id="releaseMeasureToggle"><span class="switch-track"></span></span>
+        <span class="switch"><input type="checkbox" id="releaseMeasureToggle" checked><span class="switch-track"></span></span>
         Release Measure
       </label>
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#6B6B6B;margin-left:8px;">
-        <span class="switch"><input type="checkbox" id="metronomeToggle"><span class="switch-track"></span></span>
+        <span class="switch"><input type="checkbox" id="metronomeToggle" checked><span class="switch-track"></span></span>
         Metronome
       </label>
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#6B6B6B;margin-left:8px;" title="2-bar count-in">
-        <span class="switch"><input type="checkbox" id="countInToggle"><span class="switch-track"></span></span>
+        <span class="switch"><input type="checkbox" id="countInToggle" checked><span class="switch-track"></span></span>
         Count-in
       </label>
       <button class="btn-share" id="btnShareSettings" style="margin-left:8px;">&#128279; Share Settings</button>
@@ -782,9 +782,10 @@ html.mw-touch #mwNativeShare.available { display: inline-flex; align-items: cent
 // who stops must sit out at least one note before re-entering.
 // ══════════════════════════════════════════════════════════════════════
 
-// MusicXML <divisions> = ticks per quarter. 120 = LCM(2,3,4,5,8) so 8ths,
-// 16ths, 32nds, 16th-note triplets (20) and quintuplets (24) all divide.
-const DIV = 360; // ticks per quarter: divisible by 2,3,4,5,8 and 9 (9-lets = 9 per 2 beats)
+// MusicXML <divisions> = ticks per quarter. 360 divides evenly by 2, 3, 4,
+// 5, 6 and 8, and 720 (two beats) by 9, so 8ths, 16ths, 32nds, 8th and
+// 16th triplets, quintuplets and 9-lets all land on whole ticks.
+const DIV = 360;
 let MEASURE_TICKS = DIV * 4; // updated by setTimeSignature()
 const TYPE_TICKS = { whole: DIV * 4, half: DIV * 2, quarter: DIV, eighth: DIV / 2, "16th": DIV / 4, "32nd": DIV / 8 };
 const TYPE_LEVELS = { whole: 0, half: 0, quarter: 0, eighth: 1, "16th": 2, "32nd": 3 };
@@ -1289,8 +1290,30 @@ function releaseCandidate(m, pos, N, timeline) {
   return null;
 }
 
-let lastRunCell = false;
+// The 4-in-a-row rule also has to hold where the pattern meets what comes
+// after it: the release measure's unison (when it's on) and, when looping,
+// the pattern's own first beats. Re-roll until both seams are legal.
+function seamsOk(timeline, N) {
+  const total = state.measures * MEASURE_TICKS;
+  const tail = timeline.filter((it) => !it.rest).slice(-40);
+  const release = releaseMeasureItems(state.measures).filter((it) => !it.rest);
+  if (!rulesOk(tail.concat(release), N)) return false;
+  const head = timeline.filter((it) => !it.rest).slice(0, 40)
+    .map((it) => ({ rest: false, drums: it.drums, strokes: it.strokes, on: it.on + total, end: it.end + total }));
+  return rulesOk(tail.concat(head), N);
+}
+
 function generatePattern() {
+  let result = null;
+  for (let tries = 0; tries < 25; tries++) {
+    result = generatePatternOnce();
+    if (seamsOk(result.timeline, state.drumCount)) break;
+  }
+  return result.measures;
+}
+
+let lastRunCell = false;
+function generatePatternOnce() {
   const N = state.drumCount;
   unitCounter = 0;
   lastRunCell = false;
@@ -1348,7 +1371,7 @@ function generatePattern() {
     measures.push(items);
   }
   applyOrnaments(timeline, N);
-  return measures.map(consolidateRests);
+  return { measures: measures.map(consolidateRests), timeline };
 }
 
 function applyOrnaments(timeline, N) {
@@ -1671,7 +1694,8 @@ function generateAndRender() {
 }
 
 // Rebuilds the notation from the CURRENT pattern (no regeneration) - used
-// by Mix It Up and by display-only changes such as color coding.
+// after Mix It Up and by display-only changes such as color coding and the
+// release measure.
 function renderScore(doneMsg) {
   const statusEl = document.getElementById("status");
   if (!currentMeasures.length) return;
@@ -2054,7 +2078,6 @@ let audioReadyPromise = null;
 // overlapping tails on one drum - 8 voices per sample keeps them from
 // cutting each other off.
 const VOICES_PER_SAMPLE = 8;
-// than Tenor Mixer's (which pads very short, dry samples).
 // No reverb (Bryan): the recordings carry their own room sound.
 
 function faderToDb(v) { return v <= 0 ? -Infinity : (v - 100) * 0.4; }
@@ -2125,7 +2148,8 @@ function triggerMetronomeClick(time, isDownbeat) {
 // ══════════════════════════════════════════════════════════════════════
 // PLAYBACK - every note is scheduled on the Transport in ticks, so mixed
 // subdivisions (quintuplets, 16th triplets, 32nds) land exactly and tempo
-// changes mid-playback stay in sync. Transport PPQ = 480 = 4 x DIV.
+// changes mid-playback stay in sync. Transport PPQ = DIV (360), so a
+// Transport tick is exactly one MusicXML tick.
 // ══════════════════════════════════════════════════════════════════════
 const PPQ = DIV; // Transport ticks = MusicXML ticks
 const TK = PPQ / DIV;
@@ -2228,8 +2252,16 @@ const tempoInputEl = document.getElementById("tempoInput");
 tempoInputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") tempoInputEl.blur(); });
 tempoInputEl.addEventListener("blur", (e) => { const p = parseInt(e.target.value, 10); setTempo(isNaN(p) ? state.tempo : p); });
 
-document.getElementById("loopToggle").addEventListener("change", (e) => { state.loop = e.target.checked; if (state.isPlaying) startPlayback(); });
-document.getElementById("releaseMeasureToggle").addEventListener("change", (e) => { state.releaseMeasureEnabled = e.target.checked; generateAndRender(); });
+// Loop is read on every beat, so it takes effect without restarting (no new count-in).
+document.getElementById("loopToggle").addEventListener("change", (e) => { state.loop = e.target.checked; });
+// Adds or removes the release bar around the CURRENT pattern (no new pattern).
+document.getElementById("releaseMeasureToggle").addEventListener("change", (e) => {
+  state.releaseMeasureEnabled = e.target.checked;
+  const wasPlaying = state.isPlaying;
+  stopPlayback();
+  renderScore("Release measure " + (state.releaseMeasureEnabled ? "on." : "off."));
+  if (wasPlaying) startPlayback();
+});
 document.getElementById("metronomeToggle").addEventListener("change", (e) => { state.metronome = e.target.checked; });
 document.getElementById("countInToggle").addEventListener("change", (e) => { state.countIn = e.target.checked; });
 
@@ -2290,15 +2322,52 @@ function restoreSettingsFromUrl() {
   if (!raw) return false;
   try {
     const s = JSON.parse(decodeURIComponent(raw));
-    Object.assign(state, s);
-    state.cells = new Set((s.cells || CELL_LIBRARY.map((c) => c.id)).filter((id) => CELL_LIBRARY.some((c) => c.id === id)));
-    state.rhythm = new Set(s.rhythm || ["quarter", "4x16th"]);
-    state.uAccentStatic = new Set(s.uAccentStatic || [0]);
-    if (![3, 4, 5].includes(state.beats)) state.beats = 4;
+    if (!s || typeof s !== "object") return false;
+    // A share link is outside input: copy over only known settings, each
+    // checked against what the app can actually use. (Copying the object
+    // straight in let a crafted link put markup into the page.)
+    const oneOf = (v, list, dflt) => (list.includes(v) ? v : dflt);
+    const intIn = (v, lo, hi, dflt) => (Number.isInteger(v) && v >= lo && v <= hi ? v : dflt);
+    const bool = (v, dflt) => (typeof v === "boolean" ? v : dflt);
+    const arr = (v) => (Array.isArray(v) ? v : []);
+    state.drumCount = oneOf(s.drumCount, [3, 4, 5], 5);
+    state.beats = oneOf(s.beats, [3, 4, 5], 4);
     MEASURE_TICKS = state.beats * DIV;
-    CELL_LIBRARY.forEach((c) => { if (!state.cellDirs[c.id]) state.cellDirs[c.id] = { down: true, up: true }; });
-    if (!state.cellRates || !state.cellRates.split1) state.cellRates = { split1: { 4: true, 8: false } };
-    if (![3, 4, 5].includes(state.drumCount)) state.drumCount = 5;
+    state.measures = oneOf(s.measures, [1, 2, 4, 8, 16], 2);
+    state.tempo = intIn(s.tempo, 40, 220, 118);
+    const cellIds = CELL_LIBRARY.map((c) => c.id);
+    const rhythmIds = RHYTHM_GROUPS.map((g) => g.id);
+    state.cells = new Set(Array.isArray(s.cells) ? s.cells.filter((id) => cellIds.includes(id)) : cellIds);
+    const rhythm = arr(s.rhythm).filter((id) => rhythmIds.includes(id));
+    state.rhythm = new Set(rhythm.some((id) => RHYTHM_GROUPS.find((g) => g.id === id).cat !== "rest") ? rhythm : ["quarter", "4x16th"]);
+    CELL_LIBRARY.forEach((c) => {
+      const d = s.cellDirs && s.cellDirs[c.id];
+      if (d && typeof d === "object" && (d.down === true || d.up === true)) state.cellDirs[c.id] = { down: d.down === true, up: d.up === true };
+    });
+    const r = s.cellRates && s.cellRates.split1;
+    state.cellRates = { split1: r && (r[4] === true || r[8] === true) ? { 4: r[4] === true, 8: r[8] === true } : { 4: true, 8: false } };
+    state.unisonMode = oneOf(s.unisonMode, ["only", "included", "splits"], "included");
+    state.unisonFreq = intIn(s.unisonFreq, 5, 90, 30);
+    state.accentEnabled = bool(s.accentEnabled, false);
+    state.accentDensity = intIn(s.accentDensity, 0, 100, 20);
+    state.uAccentMode = oneOf(s.uAccentMode, ["off", "static", "rotating", "mixed"], "off");
+    const spm = state.beats * 4;
+    state.uAccentStatic = Array.isArray(s.uAccentStatic)
+      ? new Set(s.uAccentStatic.filter((p) => Number.isInteger(p) && p >= 0 && p < spm))
+      : new Set([0]);
+    state.uAccentDensity = intIn(s.uAccentDensity, 0, 100, 30);
+    state.uRotateStart = intIn(s.uRotateStart, 0, spm - 1, 0);
+    state.uRotateEvery = oneOf(s.uRotateEvery, [0, 1, 2], 1);
+    state.uRotateDir = oneOf(s.uRotateDir, [1, -1], 1);
+    state.colorMode = oneOf(s.colorMode, ["off", "all", "one"], "off");
+    state.colorDrum = intIn(s.colorDrum, 1, state.drumCount, state.drumCount >= 4 ? 4 : 1);
+    state.colorHex = oneOf(s.colorHex, HIGHLIGHT_SWATCHES.map(([hex]) => hex), "#1E9E4A");
+    state.rimEnabled = bool(s.rimEnabled, false);
+    state.rimDensity = intIn(s.rimDensity, 5, 50, 10);
+    state.loop = bool(s.loop, true);
+    state.releaseMeasureEnabled = bool(s.releaseMeasureEnabled, true);
+    state.metronome = bool(s.metronome, true);
+    state.countIn = bool(s.countIn, true);
     return true;
   } catch (err) {
     console.error("Failed to parse shared settings:", err);
